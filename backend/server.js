@@ -42,5 +42,32 @@ app.get("/total-usuarios", async (req, res) => {
   res.json({ total: count });
 });
 
+// Total de agendamentos
+app.get("/total-agendamentos", async (req, res) => {
+  const { count, error } = await supabase
+    .from("appointments")
+    .select("*", { count: "exact", head: true });
+  if (error) return res.status(500).json({ erro: error.message });
+  res.json({ total: count });
+});
+
+// Total de categorias
+app.get("/total-categorias", async (req, res) => {
+  const { count, error } = await supabase
+    .from("categories")
+    .select("*", { count: "exact", head: true });
+  if (error) return res.status(500).json({ erro: error.message });
+  res.json({ total: count });
+});
+
+// Total de serviços
+app.get("/total-servicos", async (req, res) => {
+  const { count, error } = await supabase
+    .from("services")
+    .select("*", { count: "exact", head: true });
+  if (error) return res.status(500).json({ erro: error.message });
+  res.json({ total: count });
+});
+
 const PORT = 3000;
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
