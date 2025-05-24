@@ -11,9 +11,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 // Cadastro
 app.post("/cadastro", async (req, res) => {
-  const { username, email, senha } = req.body;
+  const { username, email, dataNascimento, senha } = req.body;
   const { data, error } = await supabase.from("users").insert([
-    { username, email, password_plaintext: senha }
+    { username, email, aniversario: dataNascimento, password_plaintext: senha }
   ]);
   if (error) return res.status(400).json({ erro: error.message });
   res.json({ sucesso: true });

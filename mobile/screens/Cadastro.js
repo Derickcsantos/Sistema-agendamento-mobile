@@ -6,11 +6,12 @@ import { API_URL } from '@env';
 export default function Cadastro({ navigation }) {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [dataNascimento, setDataNascimento] = useState('');
   const [senha, setSenha] = useState('');
 
   const cadastrar = async () => {
     try {
-      await axios.post(`${API_URL}/cadastro`, { username, email, senha });
+      await axios.post(`${API_URL}/cadastro`, { username, email, dataNascimento , senha });
       Alert.alert("Sucesso", "Usuário cadastrado");
       navigation.navigate("Login");
     } catch (e) {
@@ -41,6 +42,15 @@ export default function Cadastro({ navigation }) {
           placeholderTextColor="#999"
           onChangeText={setEmail}
           keyboardType="email-address"
+          autoCapitalize="none"
+        />
+
+        <TextInput 
+          style={styles.input} 
+          placeholder="Data de nascimento" 
+          placeholderTextColor="#999"
+          onChangeText={setDataNascimento}
+          keyboardType="date"
           autoCapitalize="none"
         />
         

@@ -10,7 +10,7 @@ export default function Login({ navigation }) {
   const fazerLogin = async () => {
     try {
       const res = await axios.post(`${API_URL}/login`, { email, senha });
-      navigation.navigate("Home");
+      navigation.navigate('MainApp');
     } catch (e) {
       Alert.alert("Erro", "Credenciais inválidas");
     }
