@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -6,31 +6,118 @@ import {
   Image, 
   TouchableOpacity, 
   ScrollView,
-  ActivityIndicator 
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 
-export default function Profile() {
-  const [isLoading, setIsLoading] = React.useState(false);
-  const [userData, setUserData] = React.useState({
-    name: 'João Silva',
-    email: 'joao@example.com',
-    phone: '(11) 98765-4321',
-    location: 'São Paulo, SP',
-    joinDate: '15/01/2023',
+export default function Profile({ route }) {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [userData, setUserData] = useState({
+    username: '',
+    email: '',
+    aniversario: '',
     avatar: 'https://randomuser.me/api/portraits/men/1.jpg'
   });
+  const [editMode, setEditMode] = useState(false);
+  const [formData, setFormData] = useState({
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
+  });
 
-  // Simulação de carregamento de dados
-  React.useEffect(() => {
-    setIsLoading(true);
-    // Simula uma chamada à API
-    const timer = setTimeout(() => {
+  // ID do usuário logado (deveria vir das props ou do contexto de autenticação)
+  const userId = route.params?.userId;
+
+  // Busca os dados do usuário
+  const fetchUserData = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(`http://SEU_IP:3000/api/users/${userId}`);
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      setUserData({
+        username: data.username,
+        email: data.email,
+        aniversario: data.aniversario || 'Não informado',
+        avatar: data.avatar || 'https://randomuser.me/api/portraits/men/1.jpg'
+      });
+
+      setFormData({
+        username: data.username,
+        email: data.email,
+        password: '',
+        confirmPassword: ''
+      });
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível carregar os dados do usuário');
+      console.error('Erro ao buscar dados:', error);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
+  };
 
-    return () => clearTimeout(timer);
-  }, []);
+  // Atualiza os dados do usuário
+  const updateUserData = async () => {
+    if (formData.password !== formData.confirmPassword) {
+      Alert.alert('Erro', 'As senhas não coincidem');
+      return;
+    }
+
+    try {
+      setIsUpdating(true);
+      const response = await fetch(`http://SEU_IP:3000/api/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: formData.username,
+          email: formData.email,
+          ...(formData.password && { password_plaintext: formData.password })
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      setUserData(prev => ({
+        ...prev,
+        username: data.username,
+        email: data.email
+      }));
+
+      Alert.alert('Sucesso', 'Dados atualizados com sucesso');
+      setEditMode(false);
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível atualizar os dados');
+      console.error('Erro ao atualizar:', error);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  useEffect(() => {
+    if (userId) {
+      fetchUserData();
+    }
+  }, [userId]);
+
+  const handleInputChange = (name, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
 
   const handleLogout = () => {
     // Implemente sua lógica de logout aqui
@@ -58,27 +145,86 @@ export default function Profile() {
             style={styles.avatar}
             onError={() => setUserData(prev => ({...prev, avatar: 'https://via.placeholder.com/150'}))}
           />
-          <TouchableOpacity style={styles.editButton}>
-            <MaterialIcons name="edit" size={20} color="#6a11cb" />
+          <TouchableOpacity 
+            style={styles.editButton}
+            onPress={() => setEditMode(!editMode)}
+          >
+            <MaterialIcons 
+              name={editMode ? 'close' : 'edit'} 
+              size={20} 
+              color="#6a11cb" 
+            />
           </TouchableOpacity>
         </View>
-        <Text style={styles.name}>{userData.name}</Text>
-        <Text style={styles.email}>{userData.email}</Text>
+        
+        {editMode ? (
+          <>
+            <TextInput
+              style={styles.editInput}
+              value={formData.username}
+              onChangeText={(text) => handleInputChange('username', text)}
+              placeholder="Nome de usuário"
+            />
+            <TextInput
+              style={styles.editInput}
+              value={formData.email}
+              onChangeText={(text) => handleInputChange('email', text)}
+              placeholder="E-mail"
+              keyboardType="email-address"
+            />
+          </>
+        ) : (
+          <>
+            <Text style={styles.name}>{userData.username}</Text>
+            <Text style={styles.email}>{userData.email}</Text>
+          </>
+        )}
       </View>
+
+      {editMode && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Alterar Senha</Text>
+          <TextInput
+            style={styles.editInput}
+            value={formData.password}
+            onChangeText={(text) => handleInputChange('password', text)}
+            placeholder="Nova senha"
+            secureTextEntry
+          />
+          <TextInput
+            style={styles.editInput}
+            value={formData.confirmPassword}
+            onChangeText={(text) => handleInputChange('confirmPassword', text)}
+            placeholder="Confirmar nova senha"
+            secureTextEntry
+          />
+          <TouchableOpacity 
+            style={styles.saveButton}
+            onPress={updateUserData}
+            disabled={isUpdating}
+          >
+            {isUpdating ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.saveButtonText}>Salvar Alterações</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Informações Pessoais</Text>
         <View style={styles.infoItem}>
-          <MaterialIcons name="phone" size={24} color="#6a11cb" />
-          <Text style={styles.infoText}>{userData.phone}</Text>
-        </View>
-        <View style={styles.infoItem}>
-          <MaterialIcons name="location-on" size={24} color="#6a11cb" />
-          <Text style={styles.infoText}>{userData.location}</Text>
-        </View>
-        <View style={styles.infoItem}>
           <MaterialIcons name="event" size={24} color="#6a11cb" />
-          <Text style={styles.infoText}>Membro desde: {userData.joinDate}</Text>
+          <Text style={styles.infoText}>
+            Data de Nascimento: {userData.aniversario || 'Não informada'}
+          </Text>
+        </View>
+        <View style={styles.infoItem}>
+          <MaterialIcons name="person" size={24} color="#6a11cb" />
+          <Text style={styles.infoText}>
+            ID do Usuário: {userId}
+          </Text>
         </View>
       </View>
 
@@ -140,7 +286,7 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: '#ddd', // Cor de fundo enquanto carrega
+    backgroundColor: '#ddd',
   },
   editButton: {
     position: 'absolute',
@@ -167,6 +313,15 @@ const styles = StyleSheet.create({
   email: {
     fontSize: 16,
     color: '#666',
+  },
+  editInput: {
+    width: '100%',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
   },
   section: {
     marginBottom: 25,
@@ -208,6 +363,18 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     fontSize: 16,
     color: '#333',
+  },
+  saveButton: {
+    backgroundColor: '#6a11cb',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   logoutButton: {
     backgroundColor: '#ff5252',

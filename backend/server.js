@@ -21,8 +21,15 @@ const wss = new WebSocket.Server({ server });
 const clients = new Set();
 
 wss.on('connection', (ws) => {
-  clients.add(ws);
   console.log('Novo cliente conectado');
+  
+  // Inicializa o objeto userData para este cliente
+  ws.userData = {
+    userId: null,
+    userName: null
+  };
+
+  clients.add(ws);
 
   ws.on('message', (message) => {
     try {
@@ -32,13 +39,18 @@ wss.on('connection', (ws) => {
       if (parsedMessage.type === 'identification') {
         ws.userData.userId = parsedMessage.userId;
         ws.userData.userName = parsedMessage.userName;
-        console.log(`Usuário identificado: ${parsedMessage.userName}`);
+        console.log(`Usuário identificado: ${parsedMessage.userName} (ID: ${parsedMessage.userId})`);
         return;
       }
       
       // Se for mensagem normal
       if (parsedMessage.type === 'message') {
-        // Adiciona informações do remetente
+        // Verifica se o usuário está identificado
+        if (!ws.userData.userId) {
+          console.warn('Mensagem recebida de usuário não identificado');
+          return;
+        }
+        
         const messageToSend = {
           ...parsedMessage,
           senderId: ws.userData.userId,
@@ -53,16 +65,33 @@ wss.on('connection', (ws) => {
             client.send(JSON.stringify(messageToSend));
           }
         });
-// Salva no banco de dados
+
+        // Salva no banco de dados
         saveMessageToDatabase(messageToSend);
       }
     } catch (error) {
       console.error('Erro ao processar mensagem:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Erro ao processar sua mensagem'
+      }));
     }
   });
 
   ws.on('close', () => {
-    console.log(`Usuário ${ws.userData.userName} desconectado`);
+    if (ws.userData.userId) {
+      console.log(`Usuário ${ws.userData.userName} (ID: ${ws.userData.userId}) desconectado`);
+    } else {
+      console.log('Cliente não identificado desconectado');
+    }
+    clients.delete(ws);
+  });
+
+  ws.on('error', (error) => {
+    console.error('Erro na conexão WebSocket:', error);
+    if (ws.userData.userId) {
+      clients.delete(ws.userData.userId);
+    }
   });
 });
 
@@ -75,6 +104,7 @@ async function saveMessageToDatabase(message) {
           sender_id: message.senderId,
           sender_name: message.senderName,
           content: message.text,
+          recipient_id: message.recipientId,
           room: message.room || 'default'
         }
       ]);
@@ -83,69 +113,197 @@ async function saveMessageToDatabase(message) {
     return data;
   } catch (error) {
     console.error('Erro ao salvar mensagem no banco:', error);
+    throw error;
   }
 }
-// Cadastro
-app.post("/cadastro", async (req, res) => {
+
+// Middleware para validação de dados do usuário
+const validateUserData = (req, res, next) => {
+  const { username, email } = req.body;
+  
+  if (!username || username.length < 3) {
+    return res.status(400).json({ error: 'Nome de usuário deve ter pelo menos 3 caracteres' });
+  }
+  
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'E-mail inválido' });
+  }
+  
+  next();
+};
+
+// Rotas de autenticação
+app.post("/cadastro", validateUserData, async (req, res) => {
   const { username, email, dataNascimento, senha } = req.body;
-  const { data, error } = await supabase.from("users").insert([
-    { username, email, aniversario: dataNascimento, password_plaintext: senha }
-  ]);
-  if (error) return res.status(400).json({ erro: error.message });
-  res.json({ sucesso: true });
+  
+  try {
+    // Verifica se o usuário já existe
+    const { data: existingUser, error: existingError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'E-mail já cadastrado' });
+    }
+
+    const { data, error } = await supabase
+      .from("users")
+      .insert([
+        { 
+          username, 
+          email, 
+          aniversario: dataNascimento, 
+          password_plaintext: senha 
+        }
+      ])
+      .select('id, username, email, aniversario')
+      .single();
+
+    if (error) throw error;
+    res.json({ sucesso: true, usuario: data });
+  } catch (error) {
+    console.error('Erro no cadastro:', error);
+    res.status(500).json({ error: 'Erro ao cadastrar usuário' });
+  }
 });
 
-// Login
 app.post("/login", async (req, res) => {
   const { email, senha } = req.body;
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("email", email)
-    .eq("password_plaintext", senha)
-    .single();
+  
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", email)
+      .eq("password_plaintext", senha)
+      .single();
+      
+    if (error || !data) {
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
     
-  if (error || !data) return res.status(401).json({ erro: "Credenciais inválidas" });
-  res.json({ sucesso: true, usuario: data });
+    res.json({ 
+      sucesso: true, 
+      usuario: {
+        id: data.id,
+        username: data.username,
+        email: data.email,
+        aniversario: data.aniversario
+      } 
+    });
+  } catch (error) {
+    console.error('Erro no login:', error);
+    res.status(500).json({ error: 'Erro ao realizar login' });
+  }
 });
 
-// Total de usuários
+// Rotas de dados do usuário
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, username, email, aniversario, created_at')
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Usuário não encontrado' });
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao buscar usuário:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+app.put('/api/users/:id', validateUserData, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, email, password_plaintext } = req.body;
+
+    const updateData = {
+      username,
+      email,
+      updated_at: new Date().toISOString(),
+      ...(password_plaintext && { password_plaintext })
+    };
+
+    const { data, error } = await supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, username, email, aniversario')
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (error) {
+    console.error('Erro ao atualizar usuário:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+// Rotas de estatísticas
 app.get("/total-usuarios", async (req, res) => {
-  const { count, error } = await supabase
-    .from("users")
-    .select("*", { count: "exact", head: true });
-  if (error) return res.status(500).json({ erro: error.message });
-  res.json({ total: count });
+  try {
+    const { count, error } = await supabase
+      .from("users")
+      .select("*", { count: "exact", head: true });
+    
+    if (error) throw error;
+    res.json({ total: count });
+  } catch (error) {
+    console.error('Erro ao contar usuários:', error);
+    res.status(500).json({ error: 'Erro ao contar usuários' });
+  }
 });
 
-// Total de agendamentos
 app.get("/total-agendamentos", async (req, res) => {
-  const { count, error } = await supabase
-    .from("appointments")
-    .select("*", { count: "exact", head: true });
-  if (error) return res.status(500).json({ erro: error.message });
-  res.json({ total: count });
+  try {
+    const { count, error } = await supabase
+      .from("appointments")
+      .select("*", { count: "exact", head: true });
+    
+    if (error) throw error;
+    res.json({ total: count });
+  } catch (error) {
+    console.error('Erro ao contar agendamentos:', error);
+    res.status(500).json({ error: 'Erro ao contar agendamentos' });
+  }
 });
 
-// Total de categorias
 app.get("/total-categorias", async (req, res) => {
-  const { count, error } = await supabase
-    .from("categories")
-    .select("*", { count: "exact", head: true });
-  if (error) return res.status(500).json({ erro: error.message });
-  res.json({ total: count });
+  try {
+    const { count, error } = await supabase
+      .from("categories")
+      .select("*", { count: "exact", head: true });
+    
+    if (error) throw error;
+    res.json({ total: count });
+  } catch (error) {
+    console.error('Erro ao contar categorias:', error);
+    res.status(500).json({ error: 'Erro ao contar categorias' });
+  }
 });
 
-// Total de serviços
 app.get("/total-servicos", async (req, res) => {
-  const { count, error } = await supabase
-    .from("services")
-    .select("*", { count: "exact", head: true });
-  if (error) return res.status(500).json({ erro: error.message });
-  res.json({ total: count });
+  try {
+    const { count, error } = await supabase
+      .from("services")
+      .select("*", { count: "exact", head: true });
+    
+    if (error) throw error;
+    res.json({ total: count });
+  } catch (error) {
+    console.error('Erro ao contar serviços:', error);
+    res.status(500).json({ error: 'Erro ao contar serviços' });
+  }
 });
 
-// Histórico de mensagens entre dois usuários
+// Rotas de chat
 app.get("/chat-messages", async (req, res) => {
   const { user1, user2 } = req.query;
   
@@ -162,4 +320,10 @@ app.get("/chat-messages", async (req, res) => {
     console.error('Erro ao buscar mensagens:', error);
     res.status(500).json({ error: 'Erro ao carregar mensagens' });
   }
+});
+
+// Middleware para tratamento de erros
+app.use((err, req, res, next) => {
+  console.error('Erro não tratado:', err);
+  res.status(500).json({ error: 'Ocorreu um erro inesperado' });
 });
